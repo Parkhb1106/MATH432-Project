@@ -4,7 +4,8 @@ Usage:
     python scripts/build_afdb.py
 
 Writes:
-    data/processed/T_afdb.npz     60-beat segments (see src.data.segment)
+    data/processed/T_afdb.npz     60-beat segments (see src.data.segment),
+                                  excluding EXCLUDED_RECORDS
     results/folds_afdb.json       {record: fold}, shared by A and B
 """
 
@@ -18,7 +19,12 @@ from src.data.afdb import load_all  # noqa: E402
 from src.data.folds import make_folds, save_folds  # noqa: E402
 from src.data.segment import save_segments, segment_all  # noqa: E402
 
-seg = segment_all(load_all())
+# 07162: reference .qrs beats do not line up with the QRS complexes in the
+# signal (Se/PPV ~30% vs neurokit2 on both leads; see compare_detection.py),
+# so its RR series is not trustworthy. Excluded (agreed 2026-11-23).
+EXCLUDED_RECORDS = {"07162"}
+
+seg = segment_all([r for r in load_all() if r.record not in EXCLUDED_RECORDS])
 save_segments(seg, Path("data/processed/T_afdb.npz"))
 
 folds = make_folds(seg["record"], seg["label_50"])
