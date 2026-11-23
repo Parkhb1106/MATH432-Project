@@ -1,0 +1,16 @@
+# Data (Zenodo is non-commercial / no redistribution; PhysioNet data is re-downloadable)
+/data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
