@@ -1,0 +1,562 @@
+\documentclass[11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{fancyvrb}
+\usepackage[hidelinks]{hyperref}
+
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+\renewcommand{\arraystretch}{1.15}
+\setlist{itemsep=2pt,topsep=4pt}
+\newcommand{\var}[1]{\texttt{#1}}
+
+\title{Entropy Meets Topology:\\[2pt]
+\large Transferring Atrial Fibrillation Detection from Clinical ECG to Wrist-Worn PPG\\
+via Nonlinear Dynamical Features}
+\author{MATH432 Mathematical Data Science --- Final Project}
+\date{Draft: Sections 1--2}
+
+\begin{document}
+\maketitle
+
+%=====================================================================
+\section{Introduction}
+%=====================================================================
+
+\subsection{Background}
+
+Atrial fibrillation (AF) is the most common sustained cardiac arrhythmia.
+During AF, the atria do not contract in an organised way. Electrical impulses
+reach the ventricles at irregular times, so \emph{the interval between
+consecutive heartbeats becomes irregular}. AF is associated with an
+approximately five-fold increase in the risk of stroke~\cite{wolf1991}. It is
+also often paroxysmal (it comes and goes) and asymptomatic, so a short ECG
+recorded in a clinic can easily miss it. For these reasons, long-term and
+low-cost rhythm monitoring is clinically valuable.
+
+Consumer wearables now make such monitoring possible. A smartwatch carries a
+\emph{photoplethysmography} (PPG) sensor: an LED measures changes in blood
+volume under the skin of the wrist. From this signal the watch can estimate
+the time between pulses passively and continuously. Large studies such as the
+Apple Heart Study~\cite{perez2019} have shown that PPG-based irregular-rhythm
+notifications can be used for AF screening at population scale. However, two
+problems make AF detection from wrist PPG harder than from ECG:
+\begin{enumerate}
+  \item \textbf{Scarce labels.} Annotating AF requires a simultaneous
+  reference ECG reviewed by clinicians. There are therefore far fewer
+  labelled wearable recordings than labelled clinical ECG recordings, such as
+  the MIT-BIH databases on PhysioNet~\cite{physionet}.
+  \item \textbf{Domain shift.} A PPG pulse is smoother than an ECG QRS
+  complex, so beat timing from PPG is less precise. PPG is also very
+  sensitive to motion artifacts. A model trained on clinical ECG may
+  therefore fail on wrist PPG.
+\end{enumerate}
+
+A natural bridge between the two domains is the \emph{beat-to-beat interval
+series}. From ECG we obtain RR intervals (between R-peaks); from PPG we obtain
+pulse-to-pulse intervals (PPI). Both measure essentially the same quantity,
+the time from one heartbeat to the next. Since the defining symptom of AF is
+the irregularity of exactly this series, features computed from it should
+keep their meaning across domains.
+
+The interval series is the output of a nonlinear dynamical system (the cardiac
+conduction system under autonomic control). Classical HRV statistics, such as
+the standard deviation or RMSSD, summarise only its spread. Three families of
+mathematical tools describe its \emph{dynamics} instead:
+\begin{itemize}
+  \item \textbf{Scaling laws.} Detrended fluctuation analysis
+  (DFA)~\cite{peng1995} measures the fractal correlation of the series.
+  Healthy sinus rhythm shows $1/f$-type scaling (exponent $\alpha \approx 1$),
+  while an uncorrelated series gives $\alpha \approx 0.5$.
+  \item \textbf{Entropy.} Sample entropy~\cite{richman2000} and its
+  AF-specific variant COSEn~\cite{lake2011} quantify how unpredictable the
+  next interval is. Permutation entropy~\cite{bandt2002}, computed at several
+  time scales~\cite{costa2002}, measures the diversity of up/down ordering
+  patterns.
+  \item \textbf{Topology.} Takens' theorem~\cite{takens1981} says that a
+  delay embedding of a scalar series reconstructs the geometry of the
+  underlying attractor. Persistent homology~\cite{edelsbrunner2010} then
+  describes the shape of the resulting point cloud (connected components,
+  loops) at all scales at once. The stability theorem~\cite{cohensteiner2007}
+  guarantees that this description changes only a little when the data are
+  perturbed a little, which is an attractive property for noisy wearable
+  signals. Persistence images~\cite{adams2017} and persistence
+  landscapes~\cite{bubenik2015} turn these descriptions into vectors that a
+  classifier can use.
+\end{itemize}
+
+\subsection{Problem statement}
+
+This project asks whether \textbf{AF detection learned from clinical ECG can
+be transferred to wrist-worn PPG} by using mathematically motivated features
+of the beat-interval series. We formulate four research questions
+(Table~\ref{tab:rq}).
+
+\begin{table}[ht]
+\centering
+\caption{Research questions.}
+\label{tab:rq}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+\toprule
+ & Research question \\
+\midrule
+\textbf{RQ1} & How well do scaling, entropy and topological features
+distinguish AF from non-AF on clinical ECG? Are the three families
+complementary to each other, and do they add information beyond standard HRV
+statistics? \\
+\textbf{RQ2} & Does a model trained on clinical ECG still work on wrist PPG?
+How large is the domain gap? \\
+\textbf{RQ3} & When only a few patients with labelled wrist data are
+available, does adding clinical ECG data improve performance? \\
+\textbf{RQ4} & Which features remain reliable under real motion artifacts
+recorded during daily life? \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The task is binary classification of fixed-length segments of the interval
+series into \emph{AF} and \emph{non-AF}. All evaluations are
+patient-independent: no patient contributes data to both the training and the
+test set.
+
+\subsection{Why this problem matters}
+
+\begin{itemize}
+  \item \textbf{Clinical relevance.} Earlier detection of asymptomatic AF can
+  lead to earlier treatment and prevention of stroke. Wrist PPG is the only
+  signal that a wearable can record continuously without any action from the
+  user.
+  \item \textbf{Data efficiency.} If clinical ECG databases, which are public
+  and well annotated, can compensate for scarce wearable labels, new wearable
+  devices could be deployed with much less data collection.
+  \item \textbf{Interpretability and robustness.} Commercial detection
+  algorithms are proprietary, and recent deep-learning approaches are hard to
+  interpret. Each feature in this project has a clear mathematical meaning,
+  for example ``the rhythm has lost its fractal correlation'' or ``the next
+  interval is unpredictable''. The stability theorem of persistent homology
+  also gives a theoretical reason to expect robustness to noise, which we
+  test directly in RQ4.
+  \item \textbf{Connection to the course.} The project combines empirical
+  scaling laws, entropy theory, topological data analysis and classification
+  on one real-world problem.
+\end{itemize}
+
+%=====================================================================
+\section{Data}
+%=====================================================================
+
+We use two public datasets (Table~\ref{tab:datasets}). Both are reduced to
+the same representation: a series of beat intervals in seconds, with an AF /
+non-AF label for each interval.
+
+\begin{table}[ht]
+\centering
+\caption{Datasets used in this project.}
+\label{tab:datasets}
+\begin{tabularx}{\textwidth}{@{}LLLL@{}}
+\toprule
+Dataset & Signal & Size & Role \\
+\midrule
+MIT-BIH Atrial Fibrillation Database (AFDB)~\cite{physionet,moody1983}
+  & 2-lead Holter ECG, 250\,Hz
+  & 25 patients, about 10\,h each
+  & Stage~1: feature comparison on clinical ECG (RQ1); source domain for
+    transfer (RQ2, RQ3) \\
+\addlinespace
+Long-term ECG and wrist PPG with annotated AF episodes (Zenodo,
+v6)~\cite{bacevicius2026}
+  & Wrist PPG 100\,Hz, reference ECG 500\,Hz, 3-axis accelerometers
+  & 39 patients (35 with PPG), 5--8 days each, 261 days in total
+  & Stages~2--3: target domain for transfer (RQ2, RQ3); motion robustness
+    (RQ4) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+%---------------------------------------------------------------------
+\subsection{MIT-BIH Atrial Fibrillation Database (AFDB)}
+%---------------------------------------------------------------------
+
+\paragraph{Source.} PhysioNet,
+\url{https://physionet.org/content/afdb/1.0.0/} (open access). We download it
+from PhysioNet's official open-data mirror and verify every file against the
+published SHA-256 checksums.
+
+\paragraph{Content.} The database contains 25 long-term ECG recordings from
+patients with AF, mostly paroxysmal. Each recording is about 10 hours long and
+has two ECG leads sampled at 250\,Hz with 12-bit resolution. Two recordings
+(00735, 03665) contain annotations only, with no signal. This does not affect
+us, because we use only the beat times.
+
+\paragraph{Raw file structure.} WFDB format, one set of files per record
+(Table~\ref{tab:afdb-files}).
+
+\begin{table}[ht]
+\centering
+\caption{AFDB files for one record.}
+\label{tab:afdb-files}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+\toprule
+File & Content \\
+\midrule
+\var{.hea} & Header: number of channels, sampling frequency, number of
+samples, gain \\
+\var{.dat} & ECG signal (binary, two channels) \\
+\var{.atr} & Rhythm annotations made by cardiologists: the sample index where
+each rhythm episode begins, with a label \var{(N} (normal), \var{(AFIB} (AF),
+\var{(AFL} (atrial flutter) or \var{(J} (AV junctional rhythm) \\
+\var{.qrs} & Beat (QRS) locations from an automatic detector \\
+\var{.qrsc} & Manually corrected beat locations (only records 05091 and
+07859) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\noindent\textit{Sample --- record 04746:}
+\begin{Verbatim}[fontsize=\small,frame=single,framesep=6pt]
+04746.hea   04746 2 250 9205760 22:00:00     # 2 channels, 250 Hz, 10.2 h
+            04746.dat 212 0 12 0 -57 10750 0 ECG1
+            04746.dat 212 0 12 0 -68 -18834 0 ECG2
+
+04746.dat   (first 5 samples, mV)   ECG1    ECG2
+                                   -0.285  -0.340
+                                   -0.300  -0.320
+                                   -0.310  -0.325
+                                   -0.300  -0.315
+                                   -0.300  -0.310
+
+04746.atr   sample      rhythm               # rhythm changes
+            62          (N
+            1,097,510   (AFIB
+            1,098,684   (N
+            2,284,261   (AFIB
+
+04746.qrs   sample: 124, 357, 583, 809, 1033, 1263, ...   # beat locations
+\end{Verbatim}
+
+\paragraph{From annotations to labelled intervals.} For each record:
+\begin{enumerate}
+  \item take the beat locations from \var{.qrsc} if available, otherwise from
+  \var{.qrs};
+  \item compute RR intervals,
+  $\mathrm{rr}_i = (b_{i+1} - b_i)/250$ seconds, where $b_i$ is the sample
+  index of beat $i$;
+  \item give each interval the rhythm label in force at the beat that ends it.
+\end{enumerate}
+Intervals outside $[0.25, 2.5]$\,s are flagged as implausible. In total this
+gives 1{,}221{,}650 intervals (249\,h). By time, 59.9\% is normal rhythm,
+37.5\% AF, 2.1\% junctional rhythm and 0.6\% atrial flutter.
+
+\paragraph{Segment dataset.} The interval series is cut into non-overlapping
+segments of \textbf{60 consecutive intervals}. We use a fixed number of beats
+rather than a fixed duration, so that every segment gives the same number of
+points to the entropy and topology computations regardless of heart rate. The
+labelling rules are:
+\begin{itemize}
+  \item A segment is dropped if it contains any implausible interval, any
+  atrial flutter, or any interval without a rhythm label.
+  \item AF is the AFIB label only. Normal and junctional rhythm count as
+  non-AF.
+  \item Main label: $\var{label\_50} = 1$ if at least 50\% of the segment's
+  intervals are AF.
+  \item Secondary label for a sensitivity analysis: $\var{label\_excl} = 1$
+  if at least 90\% AF, $0$ if at most 10\% AF, otherwise excluded ($-1$).
+\end{itemize}
+Record 07162 is excluded. Its reference beat locations do not match the QRS
+complexes in its signal: an independent detector agreed with only about 30\%
+of its beats, while the other records agreed at around 99\%.
+
+The resulting dataset has \textbf{18{,}925 segments from 24 patients}. Of
+these, 7{,}724 (40.8\%) are AF under \var{label\_50}; 387 segments (2.0\%)
+are ambiguous under \var{label\_excl}. Its fields are listed in
+Table~\ref{tab:afdb-fields}, and two example segments in
+Table~\ref{tab:afdb-sample}.
+
+\begin{table}[ht]
+\centering
+\caption{Fields of the AFDB segment dataset.}
+\label{tab:afdb-fields}
+\begin{tabularx}{\textwidth}{@{}llL@{}}
+\toprule
+Field & Shape & Meaning \\
+\midrule
+\var{rr} & (18925, 60) & The 60 RR intervals of the segment, in seconds \\
+\var{af\_frac} & (18925,) & Fraction of the segment's intervals annotated as
+AF \\
+\var{label\_50} & (18925,) & Main label: 1 = AF, 0 = non-AF \\
+\var{label\_excl} & (18925,) & Strict label: 1 / 0 / $-1$ (ambiguous) \\
+\var{record} & (18925,) & Patient (record) ID, used for patient-level
+splits \\
+\var{start\_samp}, \var{end\_samp} & (18925,) & Sample positions of the
+first and last beat in the original signal \\
+\var{beat\_source} & (18925,) & Which beat file was used (\var{qrs} or
+\var{qrsc}) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{Two segments from the same patient (first 8 of 60 intervals shown).}
+\label{tab:afdb-sample}
+\begin{tabularx}{\textwidth}{@{}cccccL@{}}
+\toprule
+record & \var{af\_frac} & \var{label\_50} & \var{label\_excl} &
+\var{start\_samp} & \var{rr[0:8]} (s) \\
+\midrule
+04746 & 0.0 & 0 & 0 & 124 &
+0.932, 0.904, 0.904, 0.896, 0.920, 0.944, 0.936, 0.928 \\
+04746 & 1.0 & 1 & 1 & 2{,}609{,}859 &
+0.596, 0.700, 0.480, 0.464, 0.616, 0.676, 0.556, 0.584 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The non-AF segment is regular, with intervals around 0.92\,s. The AF segment
+is shorter on average and visibly irregular.
+
+\paragraph{Patient-level folds.} The proportion of AF differs greatly between
+patients: two records are 100\% AF, while another is 0.2\% AF. We therefore
+split the 24 patients into 5 folds with \var{StratifiedGroupKFold}, grouped
+by patient and stratified by label, so that every fold has a similar AF share
+(36--46\%). The fold assignment is fixed and shared across all experiments.
+
+%---------------------------------------------------------------------
+\subsection{Long-term ECG and wrist PPG with annotated AF episodes (Zenodo)}
+%---------------------------------------------------------------------
+
+\paragraph{Source.} Zenodo, version~6 (published 3 November 2026),
+\url{https://zenodo.org/records/23921320}, DOI
+\href{https://doi.org/10.5281/zenodo.23921320}{10.5281/zenodo.23921320}. It
+is open access under the CC BY-NC-SA 4.0 licence, so the data are used for
+non-commercial research and are not redistributed in our repository. The
+data were collected at Vilnius University and Kaunas University of
+Technology.
+
+\paragraph{Content.} 39 patients were monitored for 5--8 days each, 261 days
+in total, during their daily life. Each patient wore two devices at the same
+time:
+\begin{itemize}
+  \item a \textbf{reference ECG} (Bittium Faros 180 chest device): single
+  lead, 500\,Hz, with a 25\,Hz chest accelerometer;
+  \item a \textbf{wrist device}: green-light PPG at 100\,Hz, an ambient-light
+  channel, and a 50\,Hz wrist accelerometer.
+\end{itemize}
+AF episodes were detected automatically on the ECG, then reviewed and
+corrected by clinicians. The label is given \emph{for every RR interval}.
+Four patients (024, 025, 034, 037) have no PPG data, so 35 patients can be
+used for the PPG experiments. The full dataset is 62.7\,GB, so we download
+and process a selected subset of patients.
+
+\paragraph{File structure.} MATLAB v7.3 / HDF5, read with \var{h5py}.
+Tables~\ref{tab:zen-ecg} and~\ref{tab:zen-ppg} describe the two files of one
+patient. In the PPG file, every variable is a list with one entry per
+continuous wrist recording (``PPG segment''). A file
+\var{subject\_info.xlsx} also gives demographics (sex, age, height, weight),
+lifestyle, comorbidities and medication for each patient.
+
+\begin{table}[ht]
+\centering
+\caption{Variables in \var{XXX\_ECG.mat} (one file per patient).}
+\label{tab:zen-ecg}
+\begin{tabularx}{\textwidth}{@{}llL@{}}
+\toprule
+Variable & Shape & Meaning \\
+\midrule
+\var{ECG} & $(N, 1)$ & ECG signal, 500\,Hz, $\mu$V. Gaps between recording
+sessions are filled with NaN \\
+\var{Accelerometer\_X/Y/Z} & $(N/20, 1)$ & Chest acceleration, 25\,Hz, mg \\
+\var{QRSindex} & $(n_\text{beats}, 1)$ & R-peak sample positions (1-based) \\
+\var{rr} & $(n_\text{beats}-1, 1)$ & RR intervals in seconds
+($=\mathrm{diff}(\var{QRSindex})/500$) \\
+\var{AF\_annotation} & $(n_\text{beats}-1, 1)$ & Label of each RR interval:
+1 = AF, 0 = non-AF \\
+\shortstack[l]{\var{recording\_startday},\\ \var{recording\_starttime}} & text & Start of the
+recording (day number, clock time) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{Variables in \var{XXX\_PPG.mat} (one entry per PPG segment).}
+\label{tab:zen-ppg}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+\toprule
+Variable & Content of each entry \\
+\midrule
+\var{PPG\_GREEN} & Green-light PPG waveform, 100\,Hz, ADC units \\
+\var{PPG\_AMBIENT} & Ambient-light channel, 100\,Hz \\
+\var{Accelerometer\_X/Y/Z} & Wrist acceleration, 50\,Hz, g \\
+\shortstack[l]{\var{recording\_startday},\\ \var{recording\_starttime}} & Start of the PPG
+segment on the ECG clock \\
+\var{sync\_method} & How the PPG segment was aligned to the ECG: \var{beat}
+(beat-level alignment, about $\pm 0.05$\,s) or \var{coarse} (motion-based
+alignment only, about $\pm 1$\,s) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Sample --- patient 006.} The ECG covers 183.3\,h with 864{,}623
+beats, 25.3\% of the time in AF (2 AF episodes). The first beat is at
+$\var{QRSindex}[0] = 131$, i.e.\ 0.26\,s after the start of the recording.
+0.56\% of the RR intervals lie outside $[0.25, 2.5]$\,s, for example long gaps
+where the electrodes lost contact. Table~\ref{tab:zen-sample} lists the
+patient's PPG segments.
+
+\begin{table}[ht]
+\centering
+\caption{PPG segments of patient 006.}
+\label{tab:zen-sample}
+\begin{tabular}{@{}cccccc@{}}
+\toprule
+PPG segment & Start (from ECG start) & Length & \var{sync\_method} &
+ECG beats covered & AF share \\
+\midrule
+0 & $+18.34$\,h & 2.39\,h & \var{beat} & 9{,}974 & 0\% \\
+1 & $+22.08$\,h & 0.80\,h & \var{coarse} & 3{,}274 & 0\% \\
+2 & $+45.37$\,h & 2.95\,h & \var{beat} & 17{,}495 & 100\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This sample shows an important property of the dataset: \textbf{PPG covers
+only part of the ECG monitoring time} (6.1 of 183.3 hours for patient 006).
+The amount of usable labelled PPG is therefore much smaller than the dataset
+size suggests.
+
+\paragraph{Transferring ECG labels to PPG.} Labels exist only on the ECG.
+Because the PPG start times are given on the ECG clock, each PPG segment is
+matched to the ECG beats that fall within its time span, and those beats'
+\var{AF\_annotation} values become the labels of the PPG segment. Pulse peaks
+detected in \var{PPG\_GREEN} give the PPI series. This series is then cut into
+the same 60-interval segments and labelled with the same rule as for AFDB
+(\var{label\_50}). We prefer PPG segments with $\var{sync\_method} =
+\var{beat}$, since \var{coarse} alignment ($\pm 1$\,s) is too loose for
+beat-level labels. The wrist accelerometer is aligned in the same way and is
+used in RQ4 to group segments into rest, low-activity and high-activity
+conditions.
+
+%---------------------------------------------------------------------
+\subsection{Summary of the common representation}
+%---------------------------------------------------------------------
+
+\begin{table}[ht]
+\centering
+\caption{The three domains reduced to one representation.}
+\label{tab:common}
+\begin{tabularx}{\textwidth}{@{}lLLL@{}}
+\toprule
+ & AFDB (source) & Zenodo ECG (reference) & Zenodo PPG (target) \\
+\midrule
+Beat times & Annotated QRS & \var{QRSindex} & Detected pulse peaks \\
+Interval series & RR & RR & PPI \\
+Label & Cardiologist rhythm annotation & Per-RR \var{AF\_annotation} &
+Transferred from simultaneous ECG \\
+Unit of analysis & \multicolumn{3}{l}{60-interval segment, AF / non-AF} \\
+Split & \multicolumn{3}{l}{Patient-level} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+%=====================================================================
+\begin{thebibliography}{99}
+\small
+
+\bibitem{wolf1991}
+P.~A. Wolf, R.~D. Abbott, and W.~B. Kannel.
+Atrial fibrillation as an independent risk factor for stroke: the
+Framingham Study.
+\emph{Stroke}, 22(8):983--988, 1991.
+
+\bibitem{perez2019}
+M.~V. Perez et~al.
+Large-scale assessment of a smartwatch to identify atrial fibrillation.
+\emph{New England Journal of Medicine}, 381(20):1909--1917, 2019.
+
+\bibitem{physionet}
+A.~L. Goldberger et~al.
+PhysioBank, PhysioToolkit, and PhysioNet: components of a new research
+resource for complex physiologic signals.
+\emph{Circulation}, 101(23):e215--e220, 2000.
+
+\bibitem{peng1995}
+C.-K. Peng, S.~Havlin, H.~E. Stanley, and A.~L. Goldberger.
+Quantification of scaling exponents and crossover phenomena in
+nonstationary heartbeat time series.
+\emph{Chaos}, 5(1):82--87, 1995.
+
+\bibitem{richman2000}
+J.~S. Richman and J.~R. Moorman.
+Physiological time-series analysis using approximate entropy and sample
+entropy.
+\emph{American Journal of Physiology -- Heart and Circulatory Physiology},
+278(6):H2039--H2049, 2000.
+
+\bibitem{lake2011}
+D.~E. Lake and J.~R. Moorman.
+Accurate estimation of entropy in very short physiological time series:
+the problem of atrial fibrillation detection in implanted ventricular
+devices.
+\emph{American Journal of Physiology -- Heart and Circulatory Physiology},
+300(1):H319--H325, 2011.
+
+\bibitem{bandt2002}
+C.~Bandt and B.~Pompe.
+Permutation entropy: a natural complexity measure for time series.
+\emph{Physical Review Letters}, 88(17):174102, 2002.
+
+\bibitem{costa2002}
+M.~Costa, A.~L. Goldberger, and C.-K. Peng.
+Multiscale entropy analysis of complex physiologic time series.
+\emph{Physical Review Letters}, 89(6):068102, 2002.
+
+\bibitem{takens1981}
+F.~Takens.
+Detecting strange attractors in turbulence.
+In \emph{Dynamical Systems and Turbulence}, Lecture Notes in Mathematics,
+vol.~898, pages 366--381. Springer, 1981.
+
+\bibitem{edelsbrunner2010}
+H.~Edelsbrunner and J.~Harer.
+\emph{Computational Topology: An Introduction}.
+American Mathematical Society, 2010.
+
+\bibitem{cohensteiner2007}
+D.~Cohen-Steiner, H.~Edelsbrunner, and J.~Harer.
+Stability of persistence diagrams.
+\emph{Discrete \& Computational Geometry}, 37(1):103--120, 2007.
+
+\bibitem{adams2017}
+H.~Adams et~al.
+Persistence images: a stable vector representation of persistent homology.
+\emph{Journal of Machine Learning Research}, 18(8):1--35, 2017.
+
+\bibitem{bubenik2015}
+P.~Bubenik.
+Statistical topological data analysis using persistence landscapes.
+\emph{Journal of Machine Learning Research}, 16:77--102, 2015.
+
+\bibitem{moody1983}
+G.~B. Moody and R.~G. Mark.
+A new method for detecting atrial fibrillation using R-R intervals.
+\emph{Computers in Cardiology}, 10:227--230, 1983.
+
+\bibitem{bacevicius2026}
+J.~Bacevi\v{c}ius et~al.
+Long-term electrocardiogram and wrist-based photoplethysmogram recordings
+with annotated atrial fibrillation episodes (Version v6) [Data set].
+Zenodo, 2026.
+\url{https://doi.org/10.5281/zenodo.23921320}.
+
+\end{thebibliography}
+
+\end{document}
